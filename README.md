@@ -6,9 +6,30 @@ This repository contains the code for the Master thesis *'Decoding Chemical Pred
 
 To reproduce the results obtained in the study, please follow the steps below.
 
-### Prerequisites
+Please make sure you have Python, Pytorch, Pytorch geometric, and RDKit  installed. 
 
-Ensure you have Python installed. You can install the required packages using the following command:
-
+#### Prepare dataset
 ```bash
-pip install -r requirements.txt
+python 0_preparing_dataset.py
+```
+
+#### Prepare dataset
+```bash
+python 1_linear_regression.py
+```
+
+#### Prepare dataset
+```bash
+python 2_training.py
+```
+
+#### Prepare dataset
+```bash
+python 3_get_results.py
+```
+
+#### Prepare dataset
+```bash
+python 3_get_contribution_plots.py
+```
+
