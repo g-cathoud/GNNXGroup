@@ -29,7 +29,7 @@ python 2_training.py \
 
 #### Extract the results from the trained models
 
-Before extracting the results, please prepare a `training_data.json` file containing the information of the trained models to be processed. Example of the file is given bellow:
+Before extracting the results, please prepare a `training_data.json` file containing the information of the trained models to be processed. Example of the file is given below:
 
 ```json
 {
