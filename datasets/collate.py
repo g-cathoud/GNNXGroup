@@ -1,47 +1,71 @@
 import torch
 
 def collate_fn(batch):
-    """
-    Used for preparing the data for batch training.
-    """
 
     batch_data = {}
-    
+
+    reaction_ordered_molecules = []
+    reaction_indexes = []
+    reaction_indexes_signs = []
+    reaction_enthalpies = []
+
+    for idx, reaction in enumerate(batch):
+
+        reactant = reaction['reactant']
+        product  = reaction['product']
+        reaction_enthalpies.append(reaction['dHrxn'])
+        molecules = reactant + product
+
+        reaction_ordered_molecules.extend(molecules)
+        reaction_indexes.extend([idx]*len(molecules))
+        reaction_indexes_signs.extend([-1]*len(reactant) + [1]*len(product))
+
+    batch_data['n_reactions'] = torch.tensor(len(batch))
+    batch_data['reaction_indexes'] = torch.tensor(reaction_indexes)
+    batch_data['reaction_indexes_signs'] = torch.tensor(reaction_indexes_signs)
+    batch_data['reaction_enthalpy'] = torch.tensor(reaction_enthalpies)
+
     # Collate each property
-    for key in batch[0].keys():
+    for key in reaction_ordered_molecules[0].keys():
 
-        if key not in ['smiles', 'file', 'benson_groups', 'atomic_groups', 'CHEMBL_ID', 'CONF_ID', 'group_adj']: # Remove non-numerical data
-        
-            key_data = [torch.tensor(mol[key]) for mol in batch] # Convert the data into tensors
+        if key not in ['smile', 'benson_groups', 'atomic_groups', 'group_adj', 'id', 'mol', 'atoms', 'file']:
 
-            if key_data[0].dim() == 0: # Collect the scalars here. Stack to guarantee the first dimention is always batch.
+            # Convert the data into tensors
+            key_data = [torch.tensor(mol[key]) for mol in reaction_ordered_molecules]
+
+            # Collect the scalars here. Stack to guarantee the first dimention is always batch.
+            if key_data[0].dim() == 0:
                 batch_data[key] = torch.stack(key_data)
 
-            elif key_data[0].dim() in [1, 2]: # Collect the positions here.
-                batch_data[key] = torch.nn.utils.rnn.pad_sequence(key_data, batch_first=True, padding_value=0)
+            elif key_data[0].dim() in [1, 2]:  # Collect the positions here.
+                batch_data[key] = torch.nn.utils.rnn.pad_sequence(
+                    key_data, batch_first=True, padding_value=0)
 
             else:
-                raise(f'Houston, something wrong here (key: {key}). Please check. Problem with the stacking and the padding. ')
-            
-            if key.endswith('_coefs') and batch_data[key].shape[1] < batch_data['charges'].shape[1]:
-                padding_needed = batch_data['charges'].shape[1] - batch_data[key].shape[1]
-                batch_data[key] = torch.nn.functional.pad(batch_data[key], (0, padding_needed))
+                raise (
+                    f'Houston, something wrong here (key: {key}). Please check. Problem with the stacking and the padding. ')
 
-        elif key in ['smiles', 'file', 'benson_groups', 'atomic_groups']:
-            key_data = [mol[key] for mol in batch]
+            if key.endswith('_coefs') and batch_data[key].shape[1] < batch_data['charges'].shape[1]:
+                padding_needed = batch_data['charges'].shape[1] - \
+                    batch_data[key].shape[1]
+                batch_data[key] = torch.nn.functional.pad(
+                    batch_data[key], (0, padding_needed))
+
+        elif key in ['smile', 'id', 'benson_groups', 'atomic_groups', 'file']:
+            key_data = [mol[key] for mol in reaction_ordered_molecules]
             batch_data[key] = key_data
-    
+
     atom_mask = batch_data['charges'] > 0
     batch_data['atom_mask'] = atom_mask
 
     n_nodes = batch_data['positions'].size(1)
 
-    ajd_list = [mol['group_adj'] for mol in batch]
+    ajd_list = [mol['group_adj'] for mol in reaction_ordered_molecules]
     batch_data['group_adj'] = adjust_adj_lists_for_batching(ajd_list, n_nodes)
 
     batch = batch_data
 
-    return batch 
+    return batch
 
 
 def generate_adjacency_tensor(batch_size, max_nodes):
@@ -73,7 +97,7 @@ def generate_adjacency_tensor(batch_size, max_nodes):
 
 def adjust_adj_lists_for_batching(all_lists, max_nodes):
     """
-    Adjusts adjacency lists with an offset for each graph in a batch.
+    Adjusts adjacency lists for each graph in a batch.
 
     Parameters:
     all_lists (list of lists): List containing adjacency lists for each graph.

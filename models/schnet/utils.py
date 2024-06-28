@@ -151,10 +151,7 @@ def build_mlp(
     return out_net
 
 def shifted_softplus(x):
-    """
-    Compute shifted soft-plus activation function. 
-    Math: y = ln(1 + e^{-x}) - ln(2) 
-    """
+    """Compute shifted soft-plus activation function. Math: y = ln(1 + e^{-x}) - ln(2) """
     return F.softplus(x) - math.log(2.0)
 
 def softplus_inverse(x):

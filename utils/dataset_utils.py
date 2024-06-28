@@ -10,16 +10,6 @@ def progress_bar(i, total, length=20):
     bar = '█' * filled_length + '-' * (length - filled_length)
     print(f"\r|{bar}| {percent*100:.2f}% ", end='')
 
-def progress_bar_file(filename, i, total, length=20):
-    """
-    Just for tracking the progress of the training.
-    """
-    percent = (i / total)
-    filled_length = int(length * percent)
-    bar = '█' * filled_length + '-' * (length - filled_length)
-    with open(filename, 'a', encoding='utf-8') as file:
-        file.write(f"|{bar}| {percent*100:.2f}%\n")
-        
 def generate_groups(center_atoms, neighbor_atoms, chemical_data, min_neighbors=2):
     """
     Create all the possible groups considering min of neighbors, and the center 

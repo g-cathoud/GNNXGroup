@@ -6,7 +6,7 @@ This model was extracted from:
 https://github.com/vgsatorras/egnn
 """
 
-class EGNN(nn.Module):
+class EGNN_var1(nn.Module):
     def __init__(self, 
                  in_node_nf, 
                  in_edge_nf, 
@@ -18,7 +18,7 @@ class EGNN(nn.Module):
                  attention=False, 
                  **kwargs):
 
-        super(EGNN, self).__init__()
+        super(EGNN_var1, self).__init__()
 
         self.in_node_nf = in_node_nf 
         self.in_edge_nf = in_edge_nf
@@ -62,15 +62,15 @@ class EGNN(nn.Module):
         
     def forward(self, inputs):
 
-        h0, positions, edges, n_nodes, node_mask, edge_mask, _, _ = inputs
+        h0, positions, edges, n_nodes, node_mask, edge_mask, n_reactions, reaction_indexes, reaction_indexes_signs, _, _ = inputs
         
-        h = self.embedding(h0) # Take the initial embedding of each node and expand it to the hidden dimention
+        h = self.embedding(h0)
 
-        for layer in self.layers: # Massage passing, where only the embedding of each node is updated
+        for layer in self.layers:
             if self.node_attr:
-                h, _ = layer(h, # Current embeddings to be updates
-                             edges, # Adjacency matrix/list
-                             positions, # Coordinates of the atoms
+                h, _ = layer(h,
+                             edges, 
+                             positions, 
                              edge_mask,
                              edge_attr=None, 
                              node_attr=h0)
@@ -82,18 +82,23 @@ class EGNN(nn.Module):
                              edge_attr=None,
                              node_attr=None)
 
-        h = self.node_dec(h) # Last pure NN layer in each node embedding 
-                             # before extracting the property of the graph
-        h = h*node_mask # Extract information of only the nodes that matter
-        h = h.view(-1, n_nodes, self.hidden_nf) # Correct dimentions after batch stacking
+        h = self.node_dec(h)
+        
+        h = h*node_mask
+        
+        h = h.view(-1, n_nodes, self.hidden_nf) 
 
-        h = torch.sum(h, dim=1) # This summs the embedings of all the nodes into just one. 
-        pred = self.graph_dec(h) # Extract the property from the summ trough a NN
-        pred = pred.squeeze(1)
+        h = torch.sum(h, dim=1)
+
+        temp = self.graph_dec(h)
+
+        pred = torch.zeros(n_reactions,  dtype=torch.float, device=self.device)
+
+        pred = pred.index_add_(0, reaction_indexes, temp.squeeze(1)*reaction_indexes_signs)
         
         return pred, None
     
-    def reset_parameters(self): # Linear parameters will be initilized with kaiming_uniform method
+    def reset_parameters(self):
         self.embedding.reset_parameters()
         for layer in self.layers:
             layer.reset_parameters()
@@ -104,21 +109,63 @@ class EGNN(nn.Module):
             if hasattr(layer, 'reset_parameters~'):
                 layer.reset_parameters()
 
-class EGNN_atomic(EGNN):
+class EGNN_var2(EGNN_var1):
+    def __init__(self, *args, **kwargs):
+        super(EGNN_var2, self).__init__(*args, **kwargs)
+        
+    def forward(self, inputs):
+
+        h0, positions, edges, n_nodes, node_mask, edge_mask, n_reactions, reaction_indexes, reaction_indexes_signs, _, _ = inputs
+        
+        h = self.embedding(h0) 
+
+        for layer in self.layers:
+            if self.node_attr:
+                h, _ = layer(h, 
+                             edges, 
+                             positions, 
+                             edge_mask,
+                             edge_attr=None, 
+                             node_attr=h0)
+            else:
+                h, _ = layer(h, 
+                             edges, 
+                             positions, 
+                             edge_mask,
+                             edge_attr=None,
+                             node_attr=None)
+
+        h = self.node_dec(h) 
+        
+        h = h*node_mask
+
+        h = h.view(-1, n_nodes, self.hidden_nf)
+
+        h = torch.sum(h, dim=1)  
+
+        temp = torch.zeros(n_reactions, h.size(1), dtype=torch.float, device=self.device)
+
+        temp = temp.index_add_(0, reaction_indexes, h * reaction_indexes_signs.unsqueeze(1))
+
+        pred = self.graph_dec(temp)
+
+        return pred.squeeze(1), None
+    
+class EGNN_atomic(EGNN_var1):
     def __init__(self, *args, **kwargs):
         super(EGNN_atomic, self).__init__(*args, **kwargs)
         
     def forward(self, inputs):
 
-        h0, positions, edges, n_nodes, node_mask, edge_mask, _, _ = inputs
+        h0, positions, edges, n_nodes, node_mask, edge_mask, n_reactions, reaction_indexes, reaction_indexes_signs, _, _ = inputs
         
-        h = self.embedding(h0) # Take the initial embedding of each node and expand it to the hidden dimention
+        h = self.embedding(h0) 
 
-        for layer in self.layers: # Massage passing, where only the embedding of each node is updated
+        for layer in self.layers: 
             if self.node_attr:
-                h, _ = layer(h, # Current embeddings to be updates
-                             edges, # Adjacency matrix/list
-                             positions, # Coordinates of the atoms
+                h, _ = layer(h,
+                             edges, 
+                             positions, 
                              edge_mask,
                              edge_attr=None, 
                              node_attr=h0)
@@ -130,34 +177,42 @@ class EGNN_atomic(EGNN):
                              edge_attr=None,
                              node_attr=None)
 
-        h = self.node_dec(h) # Last pure NN layer in each node embedding 
-                             # before extracting the property of the graph
-        h = h*node_mask # Extract information of only the nodes that matter
-        ac = self.graph_dec(h) # Extract the atomic contributions
+        h = self.node_dec(h) 
 
-        ac = ac*node_mask # Extract information of only the nodes that matter
+        h = h*node_mask
 
-        ac = ac.view(-1, n_nodes) # Correct dimentions after batch stacking
+        ac = self.graph_dec(h) 
 
-        pred = torch.sum(ac, dim=1) # This sums the atomic contributions to get the final prediction
+        ac = ac.view(-1, n_nodes) 
+
+        temp = torch.sum(ac, dim=1) 
+
+        pred = torch.zeros(n_reactions,  dtype=torch.float, device=self.device)
+        pred = pred.index_add_(0, reaction_indexes, temp*reaction_indexes_signs)
         
-        return pred, ac
+        reaction_contributions = [[] for _ in range(n_reactions)]
 
-class EGNN_group(EGNN):
+        for i in range(ac.size(0)):
+            reaction_index = reaction_indexes[i].item()
+            reaction_contributions[reaction_index].append(ac[i, :])
+        
+        return pred, reaction_contributions  
+
+class EGNN_group(EGNN_var1):
     def __init__(self, *args, **kwargs):
         super(EGNN_group, self).__init__(*args, **kwargs)
         
     def forward(self, inputs):
 
-        h0, positions, edges, n_nodes, node_mask, edge_mask, group_adj, group_mask = inputs
+        h0, positions, edges, n_nodes, node_mask, edge_mask, n_reactions, reaction_indexes, reaction_indexes_signs, group_adj, group_mask = inputs
         
-        h = self.embedding(h0) # Take the initial embedding of each node and expand it to the hidden dimention
+        h = self.embedding(h0) 
 
-        for layer in self.layers: # Massage passing, where only the embedding of each node is updated
+        for layer in self.layers:
             if self.node_attr:
-                h, _ = layer(h, # Current embeddings to be updates
-                             edges, # Adjacency matrix/list
-                             positions, # Coordinates of the atoms
+                h, _ = layer(h,
+                             edges, 
+                             positions, 
                              edge_mask,
                              edge_attr=None, 
                              node_attr=h0)
@@ -169,21 +224,29 @@ class EGNN_group(EGNN):
                              edge_attr=None,
                              node_attr=None)
 
-        h = self.node_dec(h) # Last pure NN layer in each node embedding 
-                             # before extracting the property of the graph
-        h = h*node_mask # Extract information of only the nodes that matter
+        h = self.node_dec(h) 
+        h = h*node_mask 
         
-        hc = unsorted_segment_sum(h[group_adj[0]], group_adj[1], num_segments=h.size(0)) # Sum embeddings based on group information
+        hc = unsorted_segment_sum(h[group_adj[0]], group_adj[1], num_segments=h.size(0))
 
-        gc = self.graph_dec(hc) # Extract the grouo contributions
+        gc = self.graph_dec(hc)
 
-        gc = gc*group_mask # Extract information of only the nodes that matter
+        gc = gc*group_mask
 
-        gc = gc.view(-1, n_nodes) # Correct dimentions after batch stacking
+        gc = gc.view(-1, n_nodes)
 
-        pred = torch.sum(gc, dim=1) # This sums the group contributions to get the final prediction 
+        temp = torch.sum(gc, dim=1)
+
+        pred = torch.zeros(n_reactions,  dtype=torch.float, device=self.device)
+        pred = pred.index_add_(0, reaction_indexes, temp*reaction_indexes_signs)
+
+        reaction_contributions = [[] for _ in range(n_reactions)]
+
+        for i in range(gc.size(0)):
+            reaction_index = reaction_indexes[i].item()
+            reaction_contributions[reaction_index].append(gc[i, :])
         
-        return pred, gc   
+        return pred, reaction_contributions   
 
 class E_GCL(nn.Module):
     """Graph Neural Net with global state and fixed number of nodes per graph.
@@ -196,13 +259,9 @@ class E_GCL(nn.Module):
 
     def __init__(self, 
                  input_nf, 
-                 # output_nf, # Usually the same as input nf. 
-                 # We don't want to change the embedings at this phase.
                  hidden_nf, 
-                 edges_in_d=0, # We could add some attrbutes to the edge. 
-                               # E.g. put the information of bonds types.
-                 nodes_att_dim=0, # We could also use the original embeddings of 
-                                  # the nodes on the trainings.
+                 edges_in_d=0, 
+                 nodes_att_dim=0,
                  act_fn=nn.SiLU(), 
                  attention=False, 
                  norm_diff=False):
@@ -217,8 +276,8 @@ class E_GCL(nn.Module):
         self.act_fn         = act_fn
         self.attention      = attention
         self.norm_diff      = norm_diff
-        self.edge_coords_nf = 1 # Usually the same as input nf.
-        self.input_edge     = input_nf * 2 # The size is double to account for the embeddings of i and j
+        self.edge_coords_nf = 1 
+        self.input_edge     = input_nf * 2 
 
         self.edge_mlp = nn.Sequential(
             nn.Linear(self.input_edge + self.edge_coords_nf + self.edges_in_d, self.hidden_nf),
@@ -236,7 +295,7 @@ class E_GCL(nn.Module):
                 nn.Linear(self.hidden_nf, 1),
                 nn.Sigmoid())
             
-    def reset_parameters(self): # Linear parameters will be initilized with kaiming_uniform method
+    def reset_parameters(self): 
         for layer in self.edge_mlp.children():
             if hasattr(layer, 'reset_parameters~'):
                 layer.reset_parameters()
@@ -249,8 +308,6 @@ class E_GCL(nn.Module):
                     layer.reset_parameters()
 
     def edge_model(self, source, target, radial, edge_attr):
-        # The edge model takes the embeddings of the source and target and nodes 
-        # and also the "edge atributes" to create a new embedding for this edge.
 
         if edge_attr is None:  
             out = torch.cat([source, target, radial], dim=1)
@@ -264,15 +321,10 @@ class E_GCL(nn.Module):
         return out
 
     def node_model(self, x, edge_index, edge_attr, node_attr):
-        # Then, with the embeddings of the edges, the embeddigs of the nodes are updated based on 
-        # the nrighboors edges of each node. 
         
         row, col = edge_index
 
         agg = unsorted_segment_sum(edge_attr, row, num_segments=x.size(0))
-        # Here I will summ all the edge atributes from the neighbors, since the graph in undirected, 
-        # using col or row does not matter. x.size(0) means that I will summ the messages of the 
-        # neighboors for all the atoms. I could also use the mean here: unsorted_segment_mean().
 
         if node_attr is not None:
             agg = torch.cat([x, agg, node_attr], dim=1)
@@ -283,7 +335,7 @@ class E_GCL(nn.Module):
         return out, agg
 
     def coord2radial(self, edge_index, coord):
-        # This function is used to get the distance between two nodes.
+
         row, col = edge_index
         coord_diff = coord[row] - coord[col]
         radial = torch.sum((coord_diff)**2, 1).unsqueeze(1)
@@ -295,11 +347,9 @@ class E_GCL(nn.Module):
         return radial, coord_diff
 
     def forward(self, h, edge_index, coord, edge_mask, edge_attr=None, node_attr=None):
-        # As said, we start calculating embeddings for each edge. Then, based on these 
-        # embeddings and the adj matrix, we update the embeding of the node.
 
-        row, col = edge_index # row represents the source nodes, col represents the destination nodes 
-        radial, coord_diff = self.coord2radial(edge_index, coord) # Gets the distances between the nodes
+        row, col = edge_index 
+        radial, coord_diff = self.coord2radial(edge_index, coord)
 
         edge_feat = self.edge_model(h[row], h[col], radial, edge_attr)
 
@@ -325,7 +375,6 @@ def prepare_inputs_egnn(data, input_args):
 
     one_hot = data['one_hot'].to(input_args['device'], input_args['dtype'])
     charges = data['charges'].to(input_args['device'], input_args['dtype'])
-
     h0 = preprocess_input(one_hot, charges, input_args['charge_power'], input_args['max_charge'], input_args['device'])
     h0 = h0.view(batch_size * n_nodes, -1).to(input_args['device'], input_args['dtype'])
 
@@ -339,7 +388,21 @@ def prepare_inputs_egnn(data, input_args):
     group_mask = data['group_mask'].view(batch_size * n_nodes, -1).to(input_args['device'], input_args['dtype'])
     group_adj = data['group_adj'].to(input_args['device'])
 
-    return h0, atom_positions, bond_edges, n_nodes, atom_mask, edge_mask, group_adj, group_mask
+    n_reactions = data['n_reactions'].to(input_args['device'])
+    reaction_indexes = data['reaction_indexes'].to(input_args['device'])
+    reaction_indexes_signs = data['reaction_indexes_signs'].to(input_args['device'])
+
+    return [h0, 
+            atom_positions, 
+            bond_edges, 
+            n_nodes, 
+            atom_mask,
+            edge_mask,
+            n_reactions, 
+            reaction_indexes, 
+            reaction_indexes_signs, 
+            group_adj, 
+            group_mask]
 
 def preprocess_input(one_hot, charges, charge_power, charge_scale, device):
     charge_tensor = (charges.unsqueeze(-1) / charge_scale).pow(
@@ -391,17 +454,16 @@ def get_egnn_model(args):
     
     if 'charge_power' in args:
         kwargs['in_node_nf'] = (args['charge_power'] + 1) * args['num_species']
-    
-    if args['dataset'] == 'qmugs':
-        kwargs['in_node_nf'] = 27
-    elif args['dataset'] == 'alchemy':
-        kwargs['in_node_nf'] = 21
 
     for k, v in kwargs.items():
         args.setdefault(k, v)
     
     # Determine model type
-    model_class = {"original": EGNN, "atomic": EGNN_atomic, "group": EGNN_group}.get(args["model_type"])
+    model_class = {"original-var1": EGNN_var1, 
+                   "original-var2": EGNN_var2, 
+                   "atomic": EGNN_atomic, 
+                   "group": EGNN_group
+                   }.get(args["model_type"])
     if not model_class:
         raise ValueError("Invalid model type specified.")
     
